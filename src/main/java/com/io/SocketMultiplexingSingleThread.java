@@ -81,6 +81,7 @@ public class SocketMultiplexingSingleThread {
                             // epoll: 通过epoll_ctl 把客户端 fd 注册到内核空间
                             acceptHandler(key);
                         } else if (key.isReadable()) {
+                            // 在当前线程里，这个方法时可能会阻塞的
                             acceptHandler(key);
                         }
                     }
