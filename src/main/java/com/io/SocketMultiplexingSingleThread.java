@@ -138,4 +138,9 @@ public class SocketMultiplexingSingleThread {
             e.printStackTrace();;
         }
     }
+
+    public static void main(String[] args) {
+        SocketMultiplexingSingleThread server = new SocketMultiplexingSingleThread();
+        server.start();
+    }
 }
