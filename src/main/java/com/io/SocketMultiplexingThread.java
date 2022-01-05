@@ -54,10 +54,8 @@ public class SocketMultiplexingThread {
                         if (key.isAcceptable()) {
                             acceptHandler(key);
                         } else if (key.isReadable()) {
-                            // 在当前线程里，这个方法时可能会阻塞的
-//                            key.cancel();
-                            // 只处理了read，并注册关心这个key的write事件
-                            readHandler(key);
+                            key.cancel();
+                            readHandler(key); // 即便抛出线程去读取，但是在时差里，这个key的read事件可能会重复触发，所以需要 key.cancel()
                         } else if (key.isWritable()) {
                             // 写事件 什么时候会发生？ send-queue 只要是有空间的，就一定会给你返回可以写事件，就会回调写方法
                             // 什么时候写，不是依赖send-queue 是不是有空间
@@ -92,54 +90,48 @@ public class SocketMultiplexingThread {
     }
 
     private void readHandler (SelectionKey key) {
-        System.out.println("read handle");
-        SocketChannel client = (SocketChannel) key.channel();
-        ByteBuffer buffer = (ByteBuffer)key.attachment();
-        buffer.clear();
-        int read = 0;
-        try {
-            while (true) {
-                read = client.read(buffer);
-                if (read > 0) {
-                    // 不直接写，而是先注册一个write事件
-                    client.register(key.selector(), SelectionKey.OP_WRITE, buffer);
-                    // 关心 OP_WRITE 其实就是关心send-queue 是否有空间
-                } else if (read == 0) {
-                    break;
-                } else {
-                    // 客户端断开连接了
-                    client.close();
-                    break;
+        new Thread(() -> {
+            System.out.println("read handle");
+            SocketChannel client = (SocketChannel) key.channel();
+            ByteBuffer buffer = (ByteBuffer)key.attachment();
+            buffer.clear();
+            int read = 0;
+            try {
+                while (true) {
+                    read = client.read(buffer);
+                    if (read > 0) {
+                        // 不直接写，而是先注册一个write事件
+                        client.register(key.selector(), SelectionKey.OP_WRITE, buffer);
+                        // 关心 OP_WRITE 其实就是关心send-queue 是否有空间
+                    } else if (read == 0) {
+                        break;
+                    } else {
+                        // 客户端断开连接了
+                        client.close();
+                        break;
+                    }
                 }
+            }catch (IOException e) {
+                e.printStackTrace();;
             }
-        }catch (IOException e) {
-            e.printStackTrace();;
-        }
+        }).start();
     }
 
     private void writeHandle (SelectionKey key) {
-        System.out.println("write handle");
-        SocketChannel client = (SocketChannel) key.channel();
-        ByteBuffer buffer = (ByteBuffer) key.attachment();
-        buffer.flip();
-        while (buffer.hasRemaining()) {
-            try {
-                client.write(buffer);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            try {
-                Thread.sleep(3000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+        new Thread(() -> {
+            System.out.println("write handle");
+            SocketChannel client = (SocketChannel) key.channel();
+            ByteBuffer buffer = (ByteBuffer) key.attachment();
+            buffer.flip();
+            while (buffer.hasRemaining()) {
+                try {
+                    client.write(buffer);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
             buffer.clear();
-            try {
-                client.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
+        }).start();
 
     }
 
