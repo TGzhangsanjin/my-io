@@ -40,8 +40,10 @@ public class SocketMultiplexingSingleThread {
 
             // server.register 相当于 listen 状态的 fd4
             // select、poll : jvm里开辟一个数组将 fd 放进去
-            // epoll: epoll_crl(fd3, ADD, fd4,
+            // epoll: epoll_ctl(fd3, ADD, fd4,  （懒加载）
             server.register(selector, SelectionKey.OP_ACCEPT);
+
+            System.out.println("register start over");
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -62,6 +64,7 @@ public class SocketMultiplexingSingleThread {
                 // epoll: 内核的 epoll_wait()
                 // 参数可以带时间，如果没有事件，默认是0， 代表会阻塞，
                 // selector.wakeup() 结果返回的是 0
+                // 懒加载:  其实在触碰到 selector.select() 调用的时候才触发了 epoll_ctl 的调用
                 while (selector.select(500) > 0) {
                     // 返回的有状态的fd集合
                     Set<SelectionKey> selectionKeys = selector.selectedKeys();
@@ -128,6 +131,7 @@ public class SocketMultiplexingSingleThread {
                 } else if (read == 0) {
                     break;
                 } else {
+                    // 客户端断开连接了
                     client.close();
                     break;
                 }
