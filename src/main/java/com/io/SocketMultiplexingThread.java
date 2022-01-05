@@ -12,14 +12,14 @@ import java.util.Set;
 
 /**
  *
- * 多路复用器， 单线程版本  写事件需要的时候才去注册
+ * 多路复用器， 多线程版本
  *
  * @Author 张三金
  * @Date 2022/1/3 0003 14:37
  * @Company jzb
  * @Version 1.0.0
  */
-public class SocketMultiplexingSingleThreadV2 {
+public class SocketMultiplexingThread {
 
     private ServerSocketChannel server = null;
 
@@ -144,7 +144,7 @@ public class SocketMultiplexingSingleThreadV2 {
     }
 
     public static void main(String[] args) {
-        SocketMultiplexingSingleThreadV2 server = new SocketMultiplexingSingleThreadV2();
+        SocketMultiplexingThread server = new SocketMultiplexingThread();
         server.start();
     }
 }
