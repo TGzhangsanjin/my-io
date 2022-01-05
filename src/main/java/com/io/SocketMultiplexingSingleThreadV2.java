@@ -12,14 +12,14 @@ import java.util.Set;
 
 /**
  *
- * 多路复用器， 单线程版本
+ * 多路复用器， 单线程版本  增加写事件
  *
  * @Author 张三金
  * @Date 2022/1/3 0003 14:37
  * @Company jzb
  * @Version 1.0.0
  */
-public class SocketMultiplexingSingleThread {
+public class SocketMultiplexingSingleThreadV2 {
 
     private ServerSocketChannel server = null;
 
@@ -32,19 +32,8 @@ public class SocketMultiplexingSingleThread {
             server = ServerSocketChannel.open();
             server.configureBlocking(false);
             server.bind(new InetSocketAddress(port));
-
-            // select、poll、epoll 优先选择 epoll， 但是启动时可以通过 -D 参数修改
-            // epoll： open -> epoll_create(fd3,
-            // select、poll
             selector = Selector.open();
-
-            // server.register 相当于 listen 状态的 fd4
-            // select、poll : jvm里开辟一个数组将 fd 放进去
-            // epoll: epoll_ctl(fd3, ADD, fd4,  （懒加载）
             server.register(selector, SelectionKey.OP_ACCEPT);
-
-            System.out.println("register start over");
-
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -55,36 +44,29 @@ public class SocketMultiplexingSingleThread {
         System.out.println("服务器启动了！！！");
         try {
             while (true) {
-                // 返回所有的 fd 集合
                 Set<SelectionKey> keys = selector.keys();
-                System.out.println(keys.size() + " size");
-
-                // selector.select(500) 啥意思？
-                // select、poll: 内核的 select(fd4) poll(fd4)
-                // epoll: 内核的 epoll_wait()
-                // 参数可以带时间，如果没有事件，默认是0， 代表会阻塞，
-                // selector.wakeup() 结果返回的是 0
-                // 懒加载:  其实在触碰到 selector.select() 调用的时候才触发了 epoll_ctl 的调用
                 while (selector.select(500) > 0) {
-                    // 返回的有状态的fd集合
                     Set<SelectionKey> selectionKeys = selector.selectedKeys();
                     Iterator<SelectionKey> iter = selectionKeys.iterator();
-                    // 对比NIO， NIO是需要每一个fd都去调用系统调用，浪费资源，而多路复用器则是调用了依次 select方法，得到多个fd的状态
-                    // 不管是哪种多路复用器，内核只返回状态，程序一样需要一个个去处理每一个 R/W
-                    // socket拿到的状态分两种：(1) accept (2) 通信 R/W
                     while (iter.hasNext()) {
                         SelectionKey key = iter.next();
                         iter.remove();
                         if (key.isAcceptable()) {
-                            // 如果接收一个新的连接，
-                            // 语义上， accept 接受连接，且返回新连接的 fd, 那新的 fd 怎么处理？
-                            // select, poll：因为内核没有单独维护这个空间，则在JVM中保存和listen的fd4放到一起
-                            // epoll: 通过epoll_ctl 把客户端 fd 注册到内核空间
                             acceptHandler(key);
                         } else if (key.isReadable()) {
                             // 在当前线程里，这个方法时可能会阻塞的
-                            // 这里我连读带写都处理了
+//                            key.cancel();
+                            // 只处理了read，并注册关心这个key的write事件
                             readHandler(key);
+                        } else if (key.isWritable()) {
+                            // 写事件 什么时候会发生？ send-queue 只要是有空间的，就一定会给你返回可以写事件，就会回调写方法
+                            // 什么时候写，不是依赖send-queue 是不是有空间
+                            // 1. 准备好要写的数据
+                            // 2. send-queue 是否有空间
+                            // 3. 所以，读 read 一开始就要注册，但是 write 依赖以上关系，什么时候用就什么时候注册write事件
+                            // 4. 如果一开始就注册write事件，就会进入死循环，一直调起
+                            key.cancel();
+                            writeHandle(key);
                         }
                     }
                 }
@@ -98,15 +80,9 @@ public class SocketMultiplexingSingleThread {
 
         try {
             ServerSocketChannel ssc = (ServerSocketChannel)key.channel();
-            // 接收客户端
             SocketChannel client = ssc.accept();
-            // 注册非阻塞
             client.configureBlocking(false);
-            // 未来读写数据通过 buffer 使用处理
             ByteBuffer buffer = ByteBuffer.allocate(8192);
-            // 调用了 register
-            // select、poll : jvm里开辟一个数组将 fd7 放进去
-            // epoll: epoll_crl(fd3, ADD, fd7,
             client.register(selector, SelectionKey.OP_READ, buffer);
             System.out.println("接收了一个新的客户端连接： " + client.getRemoteAddress());
         }catch (IOException e) {
@@ -116,6 +92,7 @@ public class SocketMultiplexingSingleThread {
     }
 
     private void readHandler (SelectionKey key) {
+        System.out.println("read handle");
         SocketChannel client = (SocketChannel) key.channel();
         ByteBuffer buffer = (ByteBuffer)key.attachment();
         buffer.clear();
@@ -124,11 +101,9 @@ public class SocketMultiplexingSingleThread {
             while (true) {
                 read = client.read(buffer);
                 if (read > 0) {
-                    buffer.flip();
-                    while (buffer.hasRemaining()) {
-                        client.write(buffer);
-                    }
-                    buffer.clear();
+                    // 不直接写，而是先注册一个write事件
+                    client.register(key.selector(), SelectionKey.OP_WRITE, buffer);
+                    // 关心 OP_WRITE 其实就是关心send-queue 是否有空间
                 } else if (read == 0) {
                     break;
                 } else {
@@ -142,8 +117,34 @@ public class SocketMultiplexingSingleThread {
         }
     }
 
+    private void writeHandle (SelectionKey key) {
+        System.out.println("write handle");
+        SocketChannel client = (SocketChannel) key.channel();
+        ByteBuffer buffer = (ByteBuffer) key.attachment();
+        buffer.flip();
+        while (buffer.hasRemaining()) {
+            try {
+                client.write(buffer);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            try {
+                Thread.sleep(3000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            buffer.clear();
+            try {
+                client.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+    }
+
     public static void main(String[] args) {
-        SocketMultiplexingSingleThread server = new SocketMultiplexingSingleThread();
+        SocketMultiplexingSingleThreadV2 server = new SocketMultiplexingSingleThreadV2();
         server.start();
     }
 }
