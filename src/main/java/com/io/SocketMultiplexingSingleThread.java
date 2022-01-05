@@ -80,7 +80,7 @@ public class SocketMultiplexingSingleThread {
                             acceptHandler(key);
                         } else if (key.isReadable()) {
                             // 在当前线程里，这个方法时可能会阻塞的
-                            acceptHandler(key);
+                            readHandler(key);
                         }
                     }
                 }
