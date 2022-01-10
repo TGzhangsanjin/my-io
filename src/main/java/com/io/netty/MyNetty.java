@@ -149,7 +149,7 @@ public class MyNetty {
             bind.sync().channel().closeFuture().sync();
             System.out.println("server close......");
         }catch (Exception e) {
-
+            e.printStackTrace();
         }
 
     }
